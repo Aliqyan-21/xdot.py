@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import operator
+import shutil
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -426,11 +427,51 @@ class DotWidget(Gtk.DrawingArea):
         return (time.time() < self.presstime + click_timeout and
                 math.hypot(deltax, deltay) < click_fuzz)
 
+    def on_url(self, url):
+        import webbrowser
+        if not url:
+            return
+    
+        if os.path.isfile(url) or os.path.exists(url):
+            abs_path = os.path.abspath(url)
+    
+            # Get preferred editor
+            editor = os.environ.get("XDOT_EDITOR") or os.environ.get("EDITOR")
+            if not editor:
+                # Windows: try notepad
+                if os.name == 'nt':
+                    editor = 'notepad'
+                else:
+                    editor = shutil.which("nvim") or shutil.which("vim") or shutil.which("nano")
+    
+            if not editor:
+                print("No suitable editor found. Set XDOT_EDITOR or EDITOR.")
+                return
+    
+            cmd = [editor, abs_path]
+    
+            terminal = os.environ.get("XDOT_TERMINAL")
+    
+            try:
+                if terminal and os.name != 'nt':
+                    subprocess.Popen([terminal, '-e'] + cmd)
+                    print(f"Launching in terminal: {' '.join(cmd)}")
+                else:
+                    subprocess.Popen(cmd)
+                    print(f"Launching directly: {' '.join(cmd)}")
+            except Exception as e:
+                print(f"Failed to launch editor: {e}")
+        else:
+            # Fallback to browser for web URLs
+            try:
+                webbrowser.open(url)
+                print(f"Opened URL: {url}")
+            except Exception as e:
+                print(f"Failed to open URL: {e}")
+
     def on_click(self, element, event):
-        """Override this method in subclass to process
-        click events. Note that element can be None
-        (click on empty space)."""
-        return False
+        if element.url:
+            self.on_url(element.url)
 
     def on_area_button_release(self, area, event):
         self.drag_action.on_button_release(event)
