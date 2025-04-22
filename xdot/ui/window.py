@@ -22,6 +22,8 @@ import sys
 import time
 import operator
 import shutil
+from prompt_toolkit import prompt
+from prompt_toolkit.completion import FuzzyWordCompleter
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -212,16 +214,25 @@ class DotWidget(Gtk.DrawingArea):
         self.graph.draw(cr, highlight_items=self.highlight, bounding=bounding)
 
     def on_draw(self, widget, cr):
+        if self.highlight:
+            for node in self.highlight:
+                if hasattr(node, 'x') and hasattr(node, 'y'):
+                    width = getattr(node, 'width', 20)
+                    height = getattr(node, 'height', 20)
+    
+                    cr.set_source_rgba(1.0, 1.0, 0.0, 0.3)
+                    cr.rectangle(node.x - 5, node.y - 5, width + 10, height + 10)
+                    cr.fill()
+    
         rect = self.get_allocation()
-        Gtk.render_background(self.get_style_context(), cr, 0, 0,
-                              rect.width, rect.height)
-
+        Gtk.render_background(self.get_style_context(), cr, 0, 0, rect.width, rect.height)
+    
         cr.save()
         self._draw_graph(cr, rect)
         cr.restore()
-
+    
         self.drag_action.draw(cr)
-
+    
         return False
 
     def get_current_pos(self):
@@ -308,6 +319,77 @@ class DotWidget(Gtk.DrawingArea):
 
     POS_INCREMENT = 100
 
+    def show_search_bar(self):
+        if hasattr(self, "search_entry") and self.search_entry.get_parent():
+            self.search_entry.set_visible(True)  # <- Ensure it becomes visible again
+            self.search_entry.grab_focus()
+            return
+    
+        # Create entry if it doesn't exist
+        self.search_entry = Gtk.Entry()
+        self.search_entry.set_placeholder_text("Search nodes, ports, signals...")
+        self.search_entry.set_hexpand(True)
+    
+        # Get the top-level widget (usually the main window)
+        win = self.get_toplevel()
+        vbox = win.get_children()[0]  # assuming a Gtk.Box or Gtk.VBox
+    
+        # Add search bar at the top
+        vbox.pack_start(self.search_entry, False, False, 0)
+        self.search_entry.show()  # <- Show for the first time
+        self.search_entry.grab_focus()
+    
+        # Connect search handling
+        self.search_entry.connect("changed", self.on_search_text_changed)
+        self.search_entry.connect("activate", self.on_search_entry_activate)
+        self.search_entry.connect("key-press-event", self.on_search_entry_key_press)
+
+    def exit_search_mode(self):
+        if hasattr(self, "search_entry"):
+            self.search_entry.set_visible(False)
+        self.search_results = []
+        self.highlight = None
+        self.queue_draw()
+        self.grab_focus()
+
+    def on_search_text_changed(self, entry):
+        query = entry.get_text().strip()
+        if not query:
+            self.highlight = None
+            self.queue_draw()
+            return
+    
+        try:
+            pattern = re.compile(query, re.IGNORECASE)
+        except re.error as err:
+            return
+    
+        matches = []
+        for element in self.graph.nodes + self.graph.edges + self.graph.shapes:
+            if hasattr(element, "search_text") and element.search_text(pattern):
+                matches.append(element)
+                self.search_results = matches
+                self.search_index = 0
+    
+        self.highlight = matches
+        self.queue_draw()
+
+    def on_search_entry_activate(self, entry):
+        if not self.search_results:
+            return
+    
+        self.search_entry.set_visible(False)
+        self.grab_focus()
+    
+        match = self.search_results[self.search_index]
+        self.animate_to(match.x, match.y)
+
+    def on_search_entry_key_press(self, widget, event):
+        if Gdk.keyval_name(event.keyval) == "Escape":
+            self.exit_search_mode()
+            return True
+        return False
+
     def on_key_press_event(self, widget, event):
         if event.keyval == Gdk.KEY_Left:
             self.x -= self.POS_INCREMENT/self.zoom_ratio
@@ -365,6 +447,25 @@ class DotWidget(Gtk.DrawingArea):
             return True
         if event.keyval == Gdk.KEY_w:
             self.zoom_to_fit()
+            return True
+        keyval = event.keyval 
+        keyname = Gdk.keyval_name(keyval)
+        if keyname == "slash":
+            self.show_search_bar();
+            return True
+        if Gdk.keyval_name(event.keyval) == "Escape":
+            if hasattr(self, "search_entry") and self.search_entry.get_visible():
+                self.exit_search_mode()
+                return True
+        if keyname in ("n", "N") and self.search_results:
+            if keyname == "n":
+                self.search_index = (self.search_index + 1) % len(self.search_results)
+            else:
+                self.search_index = (self.search_index - 1) % len(self.search_results)
+        
+            match = self.search_results[self.search_index]
+            self.set_highlight([match], search=True)
+            self.animate_to(match.x, match.y)
             return True
         return False
 
